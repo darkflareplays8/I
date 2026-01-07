@@ -1,114 +1,178 @@
 <!DOCTYPE html>
 <html>
 <head>
-<title>Friends Chat</title>
+<title>Foley Chat</title>
 <style>
-body{font-family:system-ui,serif;margin:20px;background:#f5f5f5}
-#messages{max-height:60vh;overflow:auto;border:1px solid #ddd;padding:15px;background:white;border-radius:12px}
-input,button{border:none;padding:12px 16px;border-radius:8px;font-size:16px}
-input{width:60%;background:#fff;border:1px solid #ddd}
-button{background:#007aff;color:white;cursor:pointer}
-#chat{display:none;flex-direction:column;gap:15px}
-#namePrompt{text-align:center;padding:40px}
-.msg{padding:8px 0;border-bottom:1px solid #f0f0f0}
-.system{color:#666 italic}
+* {margin:0;padding:0;box-sizing:border-box}
+body {font-family:system-ui,serif;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);min-height:100vh;padding:20px}
+#app {max-width:600px;margin:0 auto;background:white;border-radius:20px;box-shadow:0 20px 40px rgba(0,0,0,0.1);overflow:hidden}
+#header {background:linear-gradient(135deg,#ff6b6b,#feca57);color:white;padding:20px;text-align:center}
+#chat-container {height:60vh;overflow-y:auto;padding:20px;background:#f8f9fa}
+#input-container {padding:20px;background:white;border-top:1px solid #eee;display:flex;gap:10px}
+input {flex:1;padding:15px;border:2px solid #e9ecef;border-radius:25px;font-size:16px}
+button {padding:15px 25px;background:#007aff;color:white;border:none;border-radius:25px;font-size:16px;cursor:pointer;font-weight:600}
+button:hover {background:#0056b3}
+.msg {margin:10px 0;padding:12px 16px;border-radius:18px;max-width:80%;word-wrap:break-word}
+.sent {background:#007aff;color:white;margin-left:auto;text-align:right}
+.received {background:#e9ecef;color:#333;margin-right:auto}
+.system {background:#6c757d;color:white;text-align:center;margin:10px auto;font-style:italic;max-width:300px}
+#name-section {padding:40px 20px;text-align:center;background:#f8f9fa}
+#name-input {width:100%;max-width:300px;padding:15px;border:2px solid #ddd;border-radius:25px;font-size:18px;margin:15px 0}
+#status {padding:10px;font-size:14px;color:#666;text-align:center}
+.hidden {display:none!important}
+#user-info {display:flex;justify-content:space-between;align-items:center;padding:15px 20px;background:#e3f2fd}
+#change-name {background:none;border:1px solid #007aff;color:#007aff;padding:8px 16px;border-radius:20px;font-size:14px;cursor:pointer}
 </style>
 </head>
 <body>
-<div id="namePrompt">
-<h2>👋 Friends Chat</h2>
-<input id="nameInput" placeholder="Enter your name" autofocus>
-<button onclick="setName()">Join Chat</button>
-</div>
-<div id="chat">
-<div style="padding:15px;background:#e3f2fd;border-radius:8px">
-<span id="nameDisplay"></span>
-<button onclick="changeName()" style="float:right;font-size:14px;padding:6px 12px">Change</button>
-</div>
-<div id="messages"></div>
-<div>
-<input id="messageInput" placeholder="Type message..." onkeypress="if(event.key==='Enter')sendMessage()">
-<button onclick="sendMessage()">Send</button>
-</div>
+<div id="app">
+  <div id="header">
+    <h1>🎤 Foley Chat</h1>
+    <div id="status">Connecting...</div>
+  </div>
+  
+  <div id="name-section">
+    <input id="nameInput" placeholder="Enter your name to start chatting" autofocus>
+    <button onclick="joinChat()">Join Chat</button>
+  </div>
+  
+  <div id="chat-container" class="hidden">
+    <div id="user-info">
+      <span id="username-display"></span>
+      <button id="change-name-btn" onclick="changeName()">Change Name</button>
+    </div>
+    <div id="messages"></div>
+  </div>
+  
+  <div id="input-container" class="hidden">
+    <input id="messageInput" placeholder="Type your message..." onkeypress="if(event.key==='Enter') sendMessage()">
+    <button onclick="sendMessage()">Send</button>
+  </div>
 </div>
 
 <script>
-const WS_URL = 'wss://YOUR-WORKER.pages.dev/chat'; // UPDATE AFTER WORKER DEPLOY
-let ws, username = localStorage.getItem('username') || null;
+const wsUrl = location.origin.replace('http', 'ws') + '/chat';
+let ws = null;
+let username = localStorage.getItem('username') || null;
+let reconnectAttempts = 0;
+const maxReconnectAttempts = 5;
 
-function connect() {
-  ws = new WebSocket(WS_URL);
-  ws.onopen = () => console.log('✅ Connected');
-  ws.onclose = () => setTimeout(connect, 1000);
+function connectWebSocket() {
+  ws = new WebSocket(wsUrl);
   
-  ws.onmessage = (e) => {
-    const data = JSON.parse(e.data);
-    if (data.type === 'history') {
-      document.getElementById('messages').innerHTML = '';
-      data.messages.forEach(addMessage);
-    } else if (data.type === 'chat') {
-      addMessage(data);
-    } else if (data.type === 'join') {
-      addSystemMessage(`${data.name} joined`);
-    } else if (data.type === 'leave') {
-      addSystemMessage(`${data.name} left`);
+  ws.onopen = () => {
+    document.getElementById('status').textContent = 'Connected';
+    reconnectAttempts = 0;
+    if (username && document.getElementById('chat-container').classList.contains('hidden') === false) {
+      ws.send(JSON.stringify({type: 'username', name: username}));
     }
+  };
+  
+  ws.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      handleMessage(data);
+    } catch(e) {
+      console.error('Message parse error:', e);
+    }
+  };
+  
+  ws.onclose = () => {
+    document.getElementById('status').textContent = 'Disconnected - Reconnecting...';
+    if (reconnectAttempts < maxReconnectAttempts) {
+      setTimeout(() => {
+        reconnectAttempts++;
+        connectWebSocket();
+      }, 1000 * reconnectAttempts);
+    }
+  };
+  
+  ws.onerror = (error) => {
+    console.error('WebSocket error:', error);
   };
 }
 
+function handleMessage(data) {
+  if (data.type === 'history') {
+    const messagesDiv = document.getElementById('messages');
+    messagesDiv.innerHTML = '';
+    data.messages.forEach(addMessage);
+  } else if (data.type === 'chat') {
+    addMessage(data);
+  } else if (data.type === 'join') {
+    addSystemMessage(`${data.name} joined the chat`);
+  } else if (data.type === 'leave') {
+    addSystemMessage(`${data.name} left the chat`);
+  } else if (data.type === 'rename') {
+    addSystemMessage(`${data.oldName} is now ${data.newName}`);
+  }
+}
+
 function addMessage(msg) {
+  const messagesDiv = document.getElementById('messages');
   const div = document.createElement('div');
-  div.className = 'msg';
+  div.className = `msg ${msg.username === username ? 'sent' : 'received'}`;
   div.textContent = `${msg.username}: ${msg.message}`;
-  document.getElementById('messages').appendChild(div);
-  div.scrollIntoView();
+  messagesDiv.appendChild(div);
+  div.scrollIntoView({behavior: 'smooth'});
 }
 
 function addSystemMessage(text) {
+  const messagesDiv = document.getElementById('messages');
   const div = document.createElement('div');
   div.className = 'msg system';
   div.textContent = text;
-  document.getElementById('messages').appendChild(div);
-  div.scrollIntoView();
+  messagesDiv.appendChild(div);
+  div.scrollIntoView({behavior: 'smooth'});
 }
 
-function setName() {
+function joinChat() {
   username = document.getElementById('nameInput').value.trim();
-  if (username) {
+  if (username && username.length > 0) {
     localStorage.setItem('username', username);
-    document.getElementById('namePrompt').style.display = 'none';
-    document.getElementById('chat').style.display = 'flex';
-    document.getElementById('nameDisplay').textContent = `You: ${username}`;
-    if (ws) ws.send(JSON.stringify({type: 'username', name: username}));
+    document.getElementById('name-section').classList.add('hidden');
+    document.getElementById('chat-container').classList.remove('hidden');
+    document.getElementById('input-container').classList.remove('hidden');
+    document.getElementById('username-display').textContent = `You: ${username}`;
+    if (ws) {
+      ws.send(JSON.stringify({type: 'username', name: username}));
+    }
   }
 }
 
 function changeName() {
-  const newName = prompt('New name:', username);
-  if (newName && newName.trim() !== username) {
+  const newName = prompt('Enter new name:', username);
+  if (newName && newName.trim() !== username && newName.trim().length > 0) {
+    const oldName = username;
     username = newName.trim();
     localStorage.setItem('username', username);
-    document.getElementById('nameDisplay').textContent = `You: ${username}`;
-    if (ws) ws.send(JSON.stringify({type: 'changeUsername', name: username}));
+    document.getElementById('username-display').textContent = `You: ${username}`;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({type: 'changeUsername', name: username}));
+    }
+    addSystemMessage(`${oldName} is now ${username}`);
   }
 }
 
 function sendMessage() {
   const input = document.getElementById('messageInput');
-  const msg = input.value.trim();
-  if (msg && ws?.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({type: 'message', message: msg}));
+  const message = input.value.trim();
+  if (message && ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({type: 'message', message: message}));
     input.value = '';
   }
 }
 
+// Initialize
 if (username) {
-  document.getElementById('chat').style.display = 'flex';
-  document.getElementById('nameDisplay').textContent = `You: ${username}`;
+  document.getElementById('name-section').classList.add('hidden');
+  document.getElementById('chat-container').classList.remove('hidden');
+  document.getElementById('input-container').classList.remove('hidden');
+  document.getElementById('username-display').textContent = `You: ${username}`;
 } else {
-  document.getElementById('namePrompt').style.display = 'block';
+  document.getElementById('name-section').classList.remove('hidden');
 }
-connect();
+connectWebSocket();
 </script>
 </body>
 </html>
