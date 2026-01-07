@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Friends Chat</title>
+<style>
+body{font-family:system-ui,serif;margin:20px;background:#f5f5f5}
+#messages{max-height:60vh;overflow:auto;border:1px solid #ddd;padding:15px;background:white;border-radius:12px}
+input,button{border:none;padding:12px 16px;border-radius:8px;font-size:16px}
+input{width:60%;background:#fff;border:1px solid #ddd}
+button{background:#007aff;color:white;cursor:pointer}
+#chat{display:none;flex-direction:column;gap:15px}
+#namePrompt{text-align:center;padding:40px}
+.msg{padding:8px 0;border-bottom:1px solid #f0f0f0}
+.system{color:#666 italic}
+</style>
+</head>
+<body>
+<div id="namePrompt">
+<h2>👋 Friends Chat</h2>
+<input id="nameInput" placeholder="Enter your name" autofocus>
+<button onclick="setName()">Join Chat</button>
+</div>
+<div id="chat">
+<div style="padding:15px;background:#e3f2fd;border-radius:8px">
+<span id="nameDisplay"></span>
+<button onclick="changeName()" style="float:right;font-size:14px;padding:6px 12px">Change</button>
+</div>
+<div id="messages"></div>
+<div>
+<input id="messageInput" placeholder="Type message..." onkeypress="if(event.key==='Enter')sendMessage()">
+<button onclick="sendMessage()">Send</button>
+</div>
+</div>
+
+<script>
+const WS_URL = 'wss://YOUR-WORKER.pages.dev/chat'; // UPDATE AFTER WORKER DEPLOY
+let ws, username = localStorage.getItem('username') || null;
+
+function connect() {
+  ws = new WebSocket(WS_URL);
+  ws.onopen = () => console.log('✅ Connected');
+  ws.onclose = () => setTimeout(connect, 1000);
+  
+  ws.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if (data.type === 'history') {
+      document.getElementById('messages').innerHTML = '';
+      data.messages.forEach(addMessage);
+    } else if (data.type === 'chat') {
+      addMessage(data);
+    } else if (data.type === 'join') {
+      addSystemMessage(`${data.name} joined`);
+    } else if (data.type === 'leave') {
+      addSystemMessage(`${data.name} left`);
+    }
+  };
+}
+
+function addMessage(msg) {
+  const div = document.createElement('div');
+  div.className = 'msg';
+  div.textContent = `${msg.username}: ${msg.message}`;
+  document.getElementById('messages').appendChild(div);
+  div.scrollIntoView();
+}
+
+function addSystemMessage(text) {
+  const div = document.createElement('div');
+  div.className = 'msg system';
+  div.textContent = text;
+  document.getElementById('messages').appendChild(div);
+  div.scrollIntoView();
+}
+
+function setName() {
+  username = document.getElementById('nameInput').value.trim();
+  if (username) {
+    localStorage.setItem('username', username);
+    document.getElementById('namePrompt').style.display = 'none';
+    document.getElementById('chat').style.display = 'flex';
+    document.getElementById('nameDisplay').textContent = `You: ${username}`;
+    if (ws) ws.send(JSON.stringify({type: 'username', name: username}));
+  }
+}
+
+function changeName() {
+  const newName = prompt('New name:', username);
+  if (newName && newName.trim() !== username) {
+    username = newName.trim();
+    localStorage.setItem('username', username);
+    document.getElementById('nameDisplay').textContent = `You: ${username}`;
+    if (ws) ws.send(JSON.stringify({type: 'changeUsername', name: username}));
+  }
+}
+
+function sendMessage() {
+  const input = document.getElementById('messageInput');
+  const msg = input.value.trim();
+  if (msg && ws?.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({type: 'message', message: msg}));
+    input.value = '';
+  }
+}
+
+if (username) {
+  document.getElementById('chat').style.display = 'flex';
+  document.getElementById('nameDisplay').textContent = `You: ${username}`;
+} else {
+  document.getElementById('namePrompt').style.display = 'block';
+}
+connect();
+</script>
+</body>
+</html>
